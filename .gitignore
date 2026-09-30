@@ -1,10 +1,21 @@
 # Python
 __pycache__/
 *.py[cod]
+*.pyc
 *.egg-info/
 .venv/
 venv/
+
+# Environment / secrets
 .env
+.env.*
+!.env.example
+
+# Local databases (never commit: may contain credentials and session data)
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-journal
 
 # Node / Vite
 node_modules/
