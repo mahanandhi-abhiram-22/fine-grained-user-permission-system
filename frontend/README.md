@@ -1,16 +1,37 @@
-# React + Vite
+# Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+The frontend is a React application built with Vite. It uses Axios to call the Django API and currently stores JWT access and refresh tokens in browser `localStorage`. Protected requests retry once after a 401 by refreshing the access token; if refresh fails, both tokens are cleared and the app returns to login. Logout clears local tokens; there is no server-side logout/revocation endpoint.
 
-Currently, two official plugins are available:
+Because tokens are readable by same-origin JavaScript, an XSS flaw could expose them. Moving to HttpOnly cookies requires coordinated backend, CSRF, and API contract changes; this implementation preserves the existing token response contract.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Users with explicit `ASSIGN_PERMISSION` see the permission-management panel. It loads non-self target users and registered function codes from `GET /api/permissions/manage/`, then submits the full replacement set to `POST /api/permissions/assign/`.
 
-## React Compiler
+## Backend API URL
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+The API base URL is hardcoded in `src/services/api.js`:
 
-## Expanding the ESLint configuration
+```js
+const API_BASE_URL = 'http://127.0.0.1:8000/api';
+```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+The current implementation does not read a Vite environment variable for this URL. To use a different backend, update this source constant; setting an undocumented `VITE_API_URL` will not change it.
+
+## Install and Run
+
+From this directory:
+
+```powershell
+npm install
+npm run dev
+```
+
+The Vite development server normally runs at `http://localhost:5173/`. Start Django separately at `http://127.0.0.1:8000/` and ensure its CORS allowlist contains the frontend origin.
+
+## Checks and Production Build
+
+```powershell
+npm run lint
+npm run build
+```
+
+The production bundle is written to `dist/`. Use `npm run preview` to serve the build locally.

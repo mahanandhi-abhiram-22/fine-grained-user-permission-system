@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+﻿import { useState } from 'react';
 import api from '../services/api';
 
 export default function Login({ onLoginSuccess }) {
@@ -13,7 +13,7 @@ export default function Login({ onLoginSuccess }) {
       localStorage.setItem('access_token', response.data.access);
       localStorage.setItem('refresh_token', response.data.refresh);
       onLoginSuccess();
-    } catch (err) {
+    } catch {
       setError('Invalid email or password.');
     }
   };

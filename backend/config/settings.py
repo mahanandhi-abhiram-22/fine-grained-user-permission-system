@@ -2,12 +2,15 @@ import os
 from pathlib import Path
 from datetime import timedelta
 import dotenv
+from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 dotenv.load_dotenv(BASE_DIR.parent / '.env')
 
-SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-dev-key-change-in-production')
-DEBUG = os.getenv('DEBUG', 'True') == 'True'
+SECRET_KEY = os.getenv('SECRET_KEY')
+DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
+if not SECRET_KEY:
+    raise ImproperlyConfigured('Set SECRET_KEY in the project-root .env or process environment.')
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
 
 INSTALLED_APPS = [
@@ -92,6 +95,8 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ),
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 20,
 }
 
 # Simple JWT Settings

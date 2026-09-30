@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# Node / Vite
+node_modules/
+frontend/dist/
+
+# Editor / OS noise
+.vscode/
+.idea/
+.DS_Store
+*.log

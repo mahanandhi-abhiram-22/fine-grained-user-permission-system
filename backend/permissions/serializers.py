@@ -20,7 +20,7 @@ class FunctionSerializer(serializers.ModelSerializer):
 class UserFunctionAssignSerializer(serializers.Serializer):
     user_id = serializers.IntegerField()
     function_codes = serializers.ListField(
-        child=serializers.CharField(trim_whitespace=True),
+        child=serializers.CharField(trim_whitespace=True, max_length=50),
         allow_empty=True,
     )
 
@@ -30,11 +30,19 @@ class UserFunctionAssignSerializer(serializers.Serializer):
         for code in value:
             cleaned = code.strip().upper()
             if not cleaned:
-                continue
+                raise serializers.ValidationError('Permission codes cannot be blank.')
             if cleaned in seen:
                 continue
             seen.add(cleaned)
             normalized.append(cleaned)
+
+        known_codes = set(Function.objects.filter(code__in=normalized).values_list('code', flat=True))
+        unknown_codes = sorted(set(normalized) - known_codes)
+        if unknown_codes:
+            raise serializers.ValidationError(
+                f"Unknown permission code(s): {', '.join(unknown_codes)}."
+            )
+
         return normalized
 
 

@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+from django.db import transaction
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -27,6 +28,27 @@ class UserPermissionsView(APIView):
         })
 
 
+class PermissionAdminOptionsView(APIView):
+    permission_classes = [IsAuthenticated, HasFunctionPermission]
+    required_function = 'ASSIGN_PERMISSION'
+
+    def get(self, request):
+        users = User.objects.exclude(id=request.user.id).order_by('email').prefetch_related(
+            'user_functions__function'
+        )
+        return Response({
+            'users': [
+                {
+                    'id': user.id,
+                    'email': user.email,
+                    'permissions': [assignment.function.code for assignment in user.user_functions.all()],
+                }
+                for user in users
+            ],
+            'functions': list(Function.objects.order_by('code').values('code', 'name')),
+        })
+
+
 class ManagePermissionsView(APIView):
     permission_classes = [IsAuthenticated, HasFunctionPermission]
     required_function = 'ASSIGN_PERMISSION'
@@ -36,63 +58,55 @@ class ManagePermissionsView(APIView):
         serializer.is_valid(raise_exception=True)
 
         user_id = serializer.validated_data['user_id']
-        function_codes = serializer.validated_data['function_codes']
+        requested_permissions = set(serializer.validated_data['function_codes'])
 
-        try:
-            target_user = User.objects.get(id=user_id)
-        except User.DoesNotExist:
-            return Response({'detail': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
+        with transaction.atomic():
+            try:
+                target_user = User.objects.select_for_update().get(id=user_id)
+            except User.DoesNotExist:
+                return Response({'detail': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-        existing_permissions = set(
-            target_user.user_functions.values_list('function__code', flat=True)
-        )
-        requested_permissions = set(function_codes)
-
-        valid_functions = []
-        valid_codes = set()
-        module = Function._meta.get_field('module').remote_field.model.objects.first()
-        if module is None:
-            module = Function._meta.get_field('module').remote_field.model.objects.create(
-                code='core',
-                name='Core',
-                description='Default module for system permissions.',
-            )
-
-        for code in sorted(requested_permissions):
-            function, _ = Function.objects.get_or_create(
-                code=code,
-                defaults={
-                    'name': code.replace('_', ' ').title(),
-                    'description': f'Permission for {code}.',
-                    'module': module,
-                },
-            )
-            valid_functions.append(function)
-            valid_codes.add(function.code)
-
-        to_remove = existing_permissions - valid_codes
-        to_add = valid_codes - existing_permissions
-
-        if to_remove:
-            UserFunction.objects.filter(user=target_user, function__code__in=to_remove).delete()
-            for code in sorted(to_remove):
-                function = Function.objects.get(code=code)
-                PermissionAudit.objects.create(
-                    actor=request.user,
-                    target_user=target_user,
-                    function=function,
-                    action=PermissionAudit.Action.REVOKED,
+            if target_user.id == request.user.id:
+                return Response(
+                    {'detail': 'You cannot manage your own permissions.'},
+                    status=status.HTTP_403_FORBIDDEN,
                 )
 
-        for code in sorted(to_add):
-            function = Function.objects.get(code=code)
-            UserFunction.objects.get_or_create(user=target_user, function=function, defaults={'granted_by': request.user})
-            PermissionAudit.objects.create(
-                actor=request.user,
-                target_user=target_user,
-                function=function,
-                action=PermissionAudit.Action.ASSIGNED,
-            )
+            existing_functions = {
+                assignment.function.code: assignment.function
+                for assignment in UserFunction.objects.filter(user=target_user).select_related('function')
+            }
+            requested_functions = {
+                function.code: function
+                for function in Function.objects.filter(code__in=requested_permissions)
+            }
+
+            to_remove = set(existing_functions) - requested_permissions
+            to_add = requested_permissions - set(existing_functions)
+
+            if to_remove:
+                UserFunction.objects.filter(user=target_user, function__code__in=to_remove).delete()
+                for code in sorted(to_remove):
+                    PermissionAudit.objects.create(
+                        actor=request.user,
+                        target_user=target_user,
+                        function=existing_functions[code],
+                        action=PermissionAudit.Action.REVOKED,
+                    )
+
+            for code in sorted(to_add):
+                assignment, created = UserFunction.objects.get_or_create(
+                    user=target_user,
+                    function=requested_functions[code],
+                    defaults={'granted_by': request.user},
+                )
+                if created:
+                    PermissionAudit.objects.create(
+                        actor=request.user,
+                        target_user=target_user,
+                        function=assignment.function,
+                        action=PermissionAudit.Action.ASSIGNED,
+                    )
 
         return Response({
             'detail': 'Permissions updated successfully.',
