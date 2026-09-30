@@ -5,10 +5,17 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from drf_spectacular.utils import OpenApiResponse, extend_schema
+
 from audit.models import PermissionAudit
 from permissions.models import Function, UserFunction
 from permissions.permissions import HasFunctionPermission
-from permissions.serializers import UserFunctionAssignSerializer
+from permissions.serializers import (
+    CurrentPermissionsSerializer,
+    PermissionAdminOptionsSerializer,
+    PermissionAssignResultSerializer,
+    UserFunctionAssignSerializer,
+)
 
 User = get_user_model()
 
@@ -16,6 +23,18 @@ User = get_user_model()
 class UserPermissionsView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Return the caller's identity and permission codes",
+        description=(
+            'Reads the authenticated caller only; the response is never influenced by '
+            'request parameters. Any authenticated user may call this endpoint, '
+            'regardless of which function codes they hold.'
+        ),
+        responses={
+            200: CurrentPermissionsSerializer,
+            401: OpenApiResponse(description='Authentication credentials were not provided.'),
+        },
+    )
     def get(self, request):
         permissions = list(
             request.user.user_functions.values_list('function__code', flat=True).order_by('function__code')
@@ -32,6 +51,19 @@ class PermissionAdminOptionsView(APIView):
     permission_classes = [IsAuthenticated, HasFunctionPermission]
     required_function = 'ASSIGN_PERMISSION'
 
+    @extend_schema(
+        summary='List assignable users and registered function codes',
+        description=(
+            'Returns every other user account (the caller is excluded) with their '
+            'current permission codes, plus the full catalog of registered '
+            'Function rows. Requires the ASSIGN_PERMISSION function code.'
+        ),
+        responses={
+            200: PermissionAdminOptionsSerializer,
+            401: OpenApiResponse(description='Authentication credentials were not provided.'),
+            403: OpenApiResponse(description='The caller does not hold ASSIGN_PERMISSION.'),
+        },
+    )
     def get(self, request):
         users = User.objects.exclude(id=request.user.id).order_by('email').prefetch_related(
             'user_functions__function'
@@ -53,6 +85,24 @@ class ManagePermissionsView(APIView):
     permission_classes = [IsAuthenticated, HasFunctionPermission]
     required_function = 'ASSIGN_PERMISSION'
 
+    @extend_schema(
+        summary="Replace a target user's permission set",
+        description=(
+            'Treats function_codes as the complete desired state: omitted codes are '
+            'revoked and an empty list revokes every permission. Codes are '
+            'normalised to uppercase and deduplicated, and must already exist in the '
+            'Function catalog. Self-assignment is rejected. Requires the '
+            'ASSIGN_PERMISSION function code.'
+        ),
+        request=UserFunctionAssignSerializer,
+        responses={
+            200: PermissionAssignResultSerializer,
+            400: OpenApiResponse(description='Unknown or blank permission code, or malformed request body.'),
+            401: OpenApiResponse(description='Authentication credentials were not provided.'),
+            403: OpenApiResponse(description='The caller does not hold ASSIGN_PERMISSION, or targeted themselves.'),
+            404: OpenApiResponse(description='No user exists with the supplied user_id.'),
+        },
+    )
     def post(self, request):
         serializer = UserFunctionAssignSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)

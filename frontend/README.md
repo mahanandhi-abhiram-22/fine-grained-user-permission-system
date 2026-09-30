@@ -8,13 +8,19 @@ Users with explicit `ASSIGN_PERMISSION` see the permission-management panel. It 
 
 ## Backend API URL
 
-The API base URL is hardcoded in `src/services/api.js`:
+The API base URL is read from the `VITE_API_URL` environment variable, with a development fallback:
 
 ```js
-const API_BASE_URL = 'http://127.0.0.1:8000/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api';
 ```
 
-The current implementation does not read a Vite environment variable for this URL. To use a different backend, update this source constant; setting an undocumented `VITE_API_URL` will not change it.
+To point the frontend at a different backend, copy `frontend/.env.example` to `frontend/.env` and
+set `VITE_API_URL`. Vite only exposes variables prefixed with `VITE_`, and only from a `.env` file
+inside this `frontend/` directory — the project-root `.env` is read by Django, not by Vite. Do not
+commit `frontend/.env`.
+
+Note that everything in a Vite `VITE_*` variable is shipped to the browser, so never place a secret
+in it.
 
 ## Install and Run
 

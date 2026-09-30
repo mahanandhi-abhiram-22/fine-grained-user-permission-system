@@ -21,16 +21,13 @@ from django.conf import settings
 from django.core.management import call_command
 
 default_database = settings.DATABASES['default']
-expected_database = BACKEND_DIR / 'db.sqlite3'
-if default_database['ENGINE'] != 'django.db.backends.sqlite3' or Path(default_database['NAME']).resolve() != expected_database.resolve():
-    raise SystemExit('Isolated tests require the canonical project SQLite settings.')
+if default_database['ENGINE'] != 'django.db.backends.postgresql':
+    raise SystemExit('Isolated tests require the canonical project PostgreSQL settings.')
+if not default_database.get('NAME'):
+    raise SystemExit('Isolated tests require DB_NAME to be configured in the project-root .env.')
 
 test_database = settings.DATABASES['default'].setdefault('TEST', {})
 test_database.update({
-    'NAME': ':memory:',
-    'MIRROR': None,
-    'CHARSET': None,
-    'COLLATION': None,
     'MIGRATE': True,
     'DEPENDENCIES': [],
     'SERIALIZE': True,

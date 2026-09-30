@@ -1,6 +1,6 @@
 # API Reference
 
-Local backend base URL: `http://127.0.0.1:8000`. API endpoints below are mounted under `/api`. Generated Swagger UI is available at `/api/docs/`; the OpenAPI schema is at `/api/schema/`. Both documentation routes are public.
+Local backend base URL: `http://127.0.0.1:8000`. API endpoints below are mounted under `/api`. Generated Swagger UI is available at `/api/docs/`; the OpenAPI schema is at `/api/schema/`. Both documentation routes require authentication, because every endpoint except login does — use **Authorize** in the Swagger page to paste an access token.
 
 Protected API requests use the JWT access token:
 
@@ -198,6 +198,21 @@ From the `backend` directory, run `python manage.py seed_permissions` to create 
 
 ## Initial Permission Administrator Bootstrap
 
+For local development, containers, and CI, create the first administrator non-interactively:
+
+```bash
+python manage.py set_initial_permission_admin
+```
+
+It reads `DEMO_ADMIN_EMAIL` and `DEMO_ADMIN_PASSWORD` from the project-root `.env`, never prints or
+logs the password, validates it against Django's password validators, and creates a **regular**
+account granted **only `ASSIGN_PERMISSION`** together with a `PermissionAudit` row, all in one
+transaction. It refuses to run again once `ASSIGN_PERMISSION` has been granted or audited. Every
+other permission must then be assigned explicitly through the UI or `POST /api/permissions/assign/`.
+
+For a hardened production bootstrap, run `python manage.py bootstrap_permission_admin` only from a
+trusted server shell after migrations and `seed_permissions` have completed.
+
 There is no public bootstrap API. Run `python manage.py bootstrap_permission_admin` only from a trusted server shell after migrations and `seed_permissions` have completed. The command accepts only the canonical `config.settings` module and verifies its source path before mapping lookup or database access; alternate `DJANGO_SETTINGS_MODULE` and `--settings` selections are rejected. It does not accept operator identity or mapping/lock-path overrides as arguments.
 
 The principal must map to an active Django operator account in protected host configuration. Windows identity is the process-token SID; thread impersonation is rejected. POSIX identity is the effective UID, and differing real/effective UID or GID values are rejected. `SUDO_USER` is not used. Password prompts require an interactive terminal and fail before input if getpass would echo.
@@ -205,6 +220,6 @@ The principal must map to an active Django operator account in protected host co
 - **Windows:** Use the `HKLM\SOFTWARE\FineGrainedPermissionSystem\BootstrapOperators` registry key. Each value name is a SID such as `sid:<SID>`; its `DWORD` value is the mapped Django user ID. The command validates DACLs on the key and ancestors, rejecting unsafe owners, untrusted write ACEs, and unsupported ACE types. Restrict key writes to administrators and `SYSTEM`.
 - **POSIX:** Use `/etc/fine-grained-permissions/bootstrap-operators.json`, for example `{ "uid:1001": 7 }`. The file and every parent must be real, root-owned, and not group/world writable; the file must be a single-link regular file. It is opened without following symlinks and checked again after open.
 
-The command uses a host-local lock at `C:\ProgramData\FineGrainedPermissionSystem\bootstrap.lock` on Windows or `/run/fine-grained-permissions/bootstrap.lock` on POSIX. It validates file/directory type, reparse/symlink status, ownership, and ACL/modes before locking the same verified handle/file descriptor. Pre-create the POSIX directory as root-owned and non-writable by group/other, with the lock file owned by the mapped operator and mode `0600`. POSIX flock does not coordinate multiple hosts sharing a database; the configured SQLite deployment is single-host. Provision the Windows directory with restrictive ACLs for the mapped operator, administrators, and `SYSTEM`.
+The command uses a host-local lock at `C:\ProgramData\FineGrainedPermissionSystem\bootstrap.lock` on Windows or `/run/fine-grained-permissions/bootstrap.lock` on POSIX. It validates file/directory type, reparse/symlink status, ownership, and ACL/modes before locking the same verified handle/file descriptor. Pre-create the POSIX directory as root-owned and non-writable by group/other, with the lock file owned by the mapped operator and mode `0600`. POSIX flock does not coordinate multiple hosts sharing a database; the bootstrap lock is host-local by design. Provision the Windows directory with restrictive ACLs for the mapped operator, administrators, and `SYSTEM`.
 
 The command prompts for a new administrator email and hidden password, creates a regular account, and grants only `ASSIGN_PERMISSION`. The target must differ from the mapped operator. The existing `PermissionAudit` row records the mapped Django operator as actor. User creation, assignment, and audit are transactional. Bootstrap is refused if the permission has ever been assigned, even if that assignment was later revoked. Subsequent grants/revocations use `POST /api/permissions/assign/` and its existing replacement semantics.

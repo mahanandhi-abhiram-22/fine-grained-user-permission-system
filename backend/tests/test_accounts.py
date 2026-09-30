@@ -31,3 +31,39 @@ class AccountAuthTests(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class ApiDocumentationAccessTests(APITestCase):
+    """The assignment requires authentication on every endpoint except login.
+
+    That includes the generated OpenAPI schema and the Swagger UI, so an
+    anonymous request must not be able to read the API map.
+    """
+
+    documentation_routes = ('schema', 'swagger-ui')
+
+    def test_documentation_routes_require_authentication(self):
+        for route in self.documentation_routes:
+            with self.subTest(route=route):
+                response = self.client.get(reverse(route))
+
+                self.assertIn(
+                    response.status_code,
+                    (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN),
+                )
+
+    def test_authenticated_users_can_reach_the_documentation_routes(self):
+        User.objects.create_user(email='reader@example.com', password='StrongPass123!')
+        login = self.client.post(
+            reverse('token_obtain_pair'),
+            {'email': 'reader@example.com', 'password': 'StrongPass123!'},
+            format='json',
+        )
+        self.assertEqual(login.status_code, status.HTTP_200_OK)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {login.data['access']}")
+
+        for route in self.documentation_routes:
+            with self.subTest(route=route):
+                response = self.client.get(reverse(route))
+
+                self.assertEqual(response.status_code, status.HTTP_200_OK)

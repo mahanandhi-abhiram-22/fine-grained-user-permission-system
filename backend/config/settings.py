@@ -65,10 +65,17 @@ WSGI_APPLICATION = 'config.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': os.getenv('DB_NAME'),
+        'USER': os.getenv('DB_USER'),
+        'PASSWORD': os.getenv('DB_PASSWORD'),
+        'HOST': os.getenv('DB_HOST', 'localhost'),
+        'PORT': os.getenv('DB_PORT', '5432'),
     }
 }
+
+if not DATABASES['default']['NAME'] or not DATABASES['default']['USER']:
+    raise ImproperlyConfigured('Set DB_NAME and DB_USER in the project-root .env or process environment.')
 
 AUTH_USER_MODEL = 'accounts.User'
 
@@ -104,7 +111,12 @@ SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
     'AUTH_HEADER_TYPES': ('Bearer',),
-    'BLACKLIST_AFTER_ROTATION': True,
+    # Token rotation and the blacklist app are intentionally not enabled. There is
+    # no server-side logout or revocation endpoint in this project: signing out
+    # clears the tokens in the browser, and an already-issued access token stays
+    # valid until its 60-minute lifetime ends. Enabling BLACKLIST_AFTER_ROTATION
+    # without the rest_framework_simplejwt.token_blacklist app would be a no-op,
+    # so the flag is not set. See "Limitations and Repository Notes" in README.md.
 }
 
 # CORS Configuration

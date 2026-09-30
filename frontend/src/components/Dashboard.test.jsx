@@ -117,6 +117,76 @@ describe('permission-aware dashboard', () => {
     expect(screen.getByText('Employee Directory')).toBeInTheDocument();
   });
 
+  it('shows My Profile to a user holding VIEW_SELF', async () => {
+    api.get.mockResolvedValueOnce({ data: { id: 5, is_superuser: false, permissions: ['VIEW_SELF'] } });
+
+    render(<Dashboard onLogout={vi.fn()} />);
+
+    expect(await screen.findByRole('button', { name: 'My Profile' })).toBeInTheDocument();
+    expect(api.get).toHaveBeenCalledTimes(1);
+  });
+
+  it('hides My Profile from a user without VIEW_SELF', async () => {
+    api.get
+      .mockResolvedValueOnce({ data: { id: 5, is_superuser: false, permissions: ['VIEW_EMPLOYEE'] } })
+      .mockResolvedValueOnce({ data: firstPage });
+
+    render(<Dashboard onLogout={vi.fn()} />);
+
+    expect(await screen.findByText('Employee Directory')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'My Profile' })).not.toBeInTheDocument();
+  });
+
+  it('renders the caller employee record returned by /employees/me/', async () => {
+    api.get
+      .mockResolvedValueOnce({ data: { id: 5, is_superuser: false, permissions: ['VIEW_SELF'] } })
+      .mockResolvedValueOnce({
+        data: {
+          id: 9,
+          user: 5,
+          employee_code: 'EMP-009',
+          first_name: 'Self',
+          last_name: 'Viewer',
+          department: 'Security',
+        },
+      });
+
+    render(<Dashboard onLogout={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'My Profile' }));
+
+    expect(await screen.findByText('EMP-009')).toBeInTheDocument();
+    expect(screen.getByText('Self')).toBeInTheDocument();
+    expect(screen.getByText('Viewer')).toBeInTheDocument();
+    expect(screen.getByText('Security')).toBeInTheDocument();
+    expect(api.get).toHaveBeenCalledWith('/employees/me/');
+  });
+
+  it('explains a missing profile when /employees/me/ returns 404', async () => {
+    api.get
+      .mockResolvedValueOnce({ data: { id: 5, is_superuser: false, permissions: ['VIEW_SELF'] } })
+      .mockRejectedValueOnce({ response: { status: 404, data: { detail: 'Employee profile not found.' } } });
+
+    render(<Dashboard onLogout={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'My Profile' }));
+
+    expect(await screen.findByRole('alert'))
+      .toHaveTextContent('No employee profile found for your account.');
+  });
+
+  it('explains a conflicting profile when /employees/me/ returns 409', async () => {
+    api.get
+      .mockResolvedValueOnce({ data: { id: 5, is_superuser: false, permissions: ['VIEW_SELF'] } })
+      .mockRejectedValueOnce({
+        response: { status: 409, data: { detail: 'Multiple employee records are associated with this user.' } },
+      });
+
+    render(<Dashboard onLogout={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'My Profile' }));
+
+    expect(await screen.findByRole('alert'))
+      .toHaveTextContent('Multiple employee records are associated with this user.');
+  });
+
   it('returns to login when the API reports an expired session', async () => {
     localStorage.setItem('access_token', 'expired-placeholder');
     api.get.mockResolvedValueOnce({ data: { id: 5, is_superuser: false, permissions: [] } });

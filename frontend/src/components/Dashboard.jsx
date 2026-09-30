@@ -21,6 +21,11 @@ export default function Dashboard({ onLogout }) {
   const [availableFunctions, setAvailableFunctions] = useState([]);
   const [selectedUserId, setSelectedUserId] = useState('');
   const [selectedPermissionCodes, setSelectedPermissionCodes] = useState([]);
+
+  const [showProfile, setShowProfile] = useState(false);
+  const [profile, setProfile] = useState(null);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileError, setProfileError] = useState('');
   
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);
@@ -91,6 +96,32 @@ export default function Dashboard({ onLogout }) {
   }, []);
 
   const hasPermission = (code) => permissions.includes(code);
+
+  // Always requests the caller's own record. The endpoint takes no user
+  // identifier from the client, so the backend resolves the profile from the
+  // authenticated token and re-checks the VIEW_SELF function code.
+  const openProfile = async () => {
+    setShowProfile(true);
+    setProfileLoading(true);
+    setProfileError('');
+    setProfile(null);
+    try {
+      const response = await api.get('/employees/me/');
+      setProfile(response.data);
+    } catch (err) {
+      const status = err.response?.status;
+      const detail = err.response?.data?.detail;
+      if (status === 404) {
+        setProfileError('No employee profile found for your account.');
+      } else if (status === 409) {
+        setProfileError(typeof detail === 'string' ? detail : 'Multiple employee records are associated with your account.');
+      } else {
+        setProfileError(typeof detail === 'string' ? detail : 'Unable to load your profile. Please try again.');
+      }
+    } finally {
+      setProfileLoading(false);
+    }
+  };
 
   const openPermissionManager = async () => {
     setShowPermissionManager(true);
@@ -256,6 +287,43 @@ export default function Dashboard({ onLogout }) {
           {permissions.length > 0 ? permissions.map((p) => <li key={p}>{p}</li>) : <p>No specific function permissions assigned.</p>}
         </ul>
       </div>
+
+      {hasPermission('VIEW_SELF') && (
+        <section style={{ margin: '20px 0', textAlign: 'left' }}>
+          <button type="button" onClick={openProfile} disabled={profileLoading} style={{ padding: '8px 12px', background: '#17a2b8', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
+            My Profile
+          </button>
+          {showProfile && (
+            <div style={{ marginTop: '12px', padding: '16px', border: '1px solid #ddd' }}>
+              <h3>My Profile</h3>
+              {profileLoading && <p role="status">Loading profile...</p>}
+              {!profileLoading && profileError && <p role="alert" style={{ color: '#b00020' }}>{profileError}</p>}
+              {!profileLoading && !profileError && profile && (
+                <table border="1" cellPadding="10" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                  <tbody>
+                    <tr style={{ background: '#eee' }}>
+                      <th>Employee Code</th>
+                      <td>{profile.employee_code}</td>
+                    </tr>
+                    <tr>
+                      <th>First Name</th>
+                      <td>{profile.first_name}</td>
+                    </tr>
+                    <tr>
+                      <th>Last Name</th>
+                      <td>{profile.last_name}</td>
+                    </tr>
+                    <tr>
+                      <th>Department</th>
+                      <td>{profile.department}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+        </section>
+      )}
 
       {hasPermission('VIEW_EMPLOYEE') && (
         <div>

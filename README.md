@@ -1,6 +1,6 @@
 # Fine-Grained User Permission System
 
-An employee management application that demonstrates **fine-grained, per-user authorization** built with React, Django REST Framework, SQLite, and JWT authentication. Instead of assigning broad static roles (Admin / Manager / Employee), this system assigns **individual permission codes directly to specific users**, enforces every one of those permissions **on the backend**, and reflects them **dynamically in the React frontend**.
+An employee management application that demonstrates **fine-grained, per-user authorization** built with React, Django REST Framework, PostgreSQL, and JWT authentication. Instead of assigning broad static roles (Admin / Manager / Employee), this system assigns **individual permission codes directly to specific users**, enforces every one of those permissions **on the backend**, and reflects them **dynamically in the React frontend**.
 
 ---
 
@@ -100,7 +100,7 @@ Every protected API endpoint declares **which function code it requires**, and a
 | SimpleJWT | Access/refresh token issuance and validation |
 | django-cors-headers | CORS for the local Vite dev server |
 | drf-spectacular | OpenAPI schema and Swagger UI |
-| SQLite | Relational database |
+| PostgreSQL 14+ | Relational database (required by the assignment) |
 
 ### Version control
 
@@ -275,8 +275,8 @@ All endpoints are mounted under `/api`. Full request/response detail is in [`doc
 | `GET` | `/api/permissions/me/` | Return the caller's id, email, and permission codes | Any authenticated user |
 | `GET` | `/api/permissions/manage/` | List target users (excluding self) and registered functions | `ASSIGN_PERMISSION` |
 | `POST` | `/api/permissions/assign/` | Replace a target user's permission set | `ASSIGN_PERMISSION` |
-| `GET` | `/api/schema/` | OpenAPI schema | Public |
-| `GET` | `/api/docs/` | Swagger UI | Public |
+| `GET` | `/api/schema/` | OpenAPI schema | Any authenticated user |
+| `GET` | `/api/docs/` | Swagger UI | Any authenticated user |
 
 **Status codes**
 
@@ -492,8 +492,8 @@ All figures below were produced by running the commands in this repository.
 | Suite | Command | Result |
 |---|---|---|
 | Bootstrap security | `python -B tests/run_isolated.py tests.test_bootstrap_security` | **19 passed**, 4 platform skips |
-| Full backend suite | `python -B tests/run_isolated.py` | **56 passed**, 4 platform skips |
-| Frontend | `npm test` | **8 / 8 passed** (2 test files) |
+| Full backend suite | `python -B tests/run_isolated.py` | **64 passed**, 4 platform skips |
+| Frontend | `npm test` | **13 / 13 passed** (2 test files) |
 | Lint | `npm run lint` | **Clean**, no errors or warnings |
 | Production build | `npm run build` | **Successful** |
 
@@ -509,9 +509,11 @@ They are guarded by `@unittest.skipUnless(os.name == 'posix', ...)`. This is int
 ### Test coverage highlights
 
 - Unauthenticated requests are rejected with `401`; authenticated-but-unauthorized requests receive `403`.
+- The OpenAPI schema and Swagger UI require authentication, and remain reachable for a signed-in user.
 - Each employee action is denied without its specific permission and allowed with it.
 - A superuser **without** explicit function codes is denied on protected endpoints.
 - `VIEW_SELF` returns only the caller's record, and returns `404` / `409` for missing / multiple records.
+- Function codes are validated as uppercase at the model layer, and `seed_permissions` is idempotent.
 - Pagination returns 20 records per page and rejects invalid page numbers.
 - Permission assignment validates codes, rejects unknown codes, revokes omitted codes, rejects self-assignment, and writes audit rows.
 - Bootstrap refuses an unsafe lock path **before** any operator lookup, database access, or prompt, and re-verifies the lock path immediately before acquisition.
@@ -520,7 +522,7 @@ They are guarded by `@unittest.skipUnless(os.name == 'posix', ...)`. This is int
 
 ### Isolated test runner
 
-`backend/tests/run_isolated.py` runs the Django suite against an **in-memory SQLite** database. It pins the canonical `config.settings` module, rejects redirection to arbitrary settings modules, generates an ephemeral per-process `SECRET_KEY`, disables bytecode writes, and asserts the configured database is the canonical project SQLite file before overriding the test database. Production data in `backend/db.sqlite3` is never read or modified by the test suite.
+`backend/tests/run_isolated.py` runs the Django suite against **PostgreSQL**. It pins the canonical `config.settings` module, rejects redirection to arbitrary settings modules, generates an ephemeral per-process `SECRET_KEY`, disables bytecode writes, and asserts that the configured database engine is the project's PostgreSQL engine before running. Django creates a separate throwaway test database (`test_<DB_NAME>`) for the run and drops it afterwards, so your development data in `DB_NAME` is never read or modified by the test suite.
 
 ---
 
@@ -534,11 +536,10 @@ fine-grained-permissions/
 │
 ├── backend/
 │   ├── manage.py
-│   ├── db.sqlite3                # Local SQLite database
 │   ├── requirements.txt
 │   │
 │   ├── config/                   # Django project configuration
-│   │   ├── settings.py           # Apps, DRF, SimpleJWT, CORS, SQLite
+│   │   ├── settings.py           # Apps, DRF, SimpleJWT, CORS, PostgreSQL
 │   │   ├── urls.py               # Root URL conf and API router mounts
 │   │   ├── asgi.py
 │   │   └── wsgi.py
@@ -558,6 +559,7 @@ fine-grained-permissions/
 │   │   ├── bootstrap_security.py # OS identity, ACL and lock-path validation
 │   │   └── management/commands/
 │   │       ├── seed_permissions.py
+│   │       ├── set_initial_permission_admin.py
 │   │       └── bootstrap_permission_admin.py
 │   │
 │   ├── employees/                # Employee CRUD with per-action permissions
@@ -570,7 +572,7 @@ fine-grained-permissions/
 │   │   └── models.py
 │   │
 │   └── tests/
-│       ├── run_isolated.py       # In-memory SQLite test runner
+│       ├── run_isolated.py       # PostgreSQL-isolated test runner
 │       ├── test_accounts.py
 │       ├── test_employees.py
 │       ├── test_permissions.py
@@ -607,7 +609,9 @@ fine-grained-permissions/
 
 - Python 3.10+
 - Node.js 18+ and npm
-- SQLite (bundled with Python; no separate server required)
+- **PostgreSQL 14 or newer**, running locally. PostgreSQL is required by the assignment and the
+  Django settings have no SQLite fallback; `settings.py` raises `ImproperlyConfigured` unless the
+  database is configured.
 
 ### 1. Backend environment
 
@@ -634,7 +638,24 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 3. Configure environment variables
+`requirements.txt` installs `psycopg2-binary`, the PostgreSQL driver Django uses to connect.
+
+### 3. Create the PostgreSQL database and role
+
+`backend/config/settings.py` configures `django.db.backends.postgresql`, so a PostgreSQL database
+and a login role must exist before Django will start:
+
+```bash
+# using the PostgreSQL client tools
+psql -U postgres -c "CREATE ROLE fine_grained WITH LOGIN PASSWORD 'choose-a-strong-password' CREATEDB;"
+psql -U postgres -c "CREATE DATABASE fine_grained_permissions OWNER fine_grained;"
+```
+
+The role name and database name are up to you — they only have to match the `DB_USER` and `DB_NAME`
+values you set in the next step. `CREATEDB` is the privilege that allows the test runner to create
+and then drop the throwaway `test_fine_grained_permissions` database.
+
+### 4. Configure environment variables
 
 The project reads a `.env` file from the **repository root** (the parent of `backend/`). Copy the template:
 
@@ -644,12 +665,32 @@ copy .env.example .env      # Windows
 cp .env.example .env        # macOS / Linux
 ```
 
-Then set a unique secret key:
+Then fill in the values. The complete set of variables the project reads is:
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `SECRET_KEY` | Yes | Django signing key. `settings.py` raises `ImproperlyConfigured` when it is missing. |
+| `DEBUG` | Yes | `True` for local development, `False` in production. |
+| `ALLOWED_HOSTS` | Yes | Comma-separated host list, e.g. `localhost,127.0.0.1`. |
+| `DB_NAME` | Yes | PostgreSQL database name, e.g. `fine_grained_permissions`. |
+| `DB_USER` | Yes | PostgreSQL role that owns the database. |
+| `DB_PASSWORD` | Yes | Password for that PostgreSQL role. |
+| `DB_HOST` | Yes | PostgreSQL host, e.g. `localhost`. |
+| `DB_PORT` | Yes | PostgreSQL port, e.g. `5432`. |
+| `DEMO_ADMIN_EMAIL` | No | Email for `set_initial_permission_admin`. |
+| `DEMO_ADMIN_PASSWORD` | No | Password for that account. Never printed or logged. |
+
+A development example:
 
 ```
 SECRET_KEY=<your-unique-random-value>
 DEBUG=True
 ALLOWED_HOSTS=localhost,127.0.0.1
+DB_NAME=fine_grained_permissions
+DB_USER=fine_grained
+DB_PASSWORD=<the-password-you-chose-for-the-role>
+DB_HOST=localhost
+DB_PORT=5432
 ```
 
 Generate one with:
@@ -658,36 +699,92 @@ Generate one with:
 python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
 ```
 
-`settings.py` raises `ImproperlyConfigured` if `SECRET_KEY` is not set. **Never commit your `.env` file** — it is listed in `.gitignore`.
+`settings.py` raises `ImproperlyConfigured` if `SECRET_KEY` is not set, and again if `DB_NAME` or
+`DB_USER` is not set. **Never commit your `.env` file** — it is listed in `.gitignore`, and it
+contains your `SECRET_KEY`, your PostgreSQL password, and your administrator password.
 
-### 4. Apply database migrations
+### 5. Apply database migrations
 
 ```bash
 cd backend
 python manage.py migrate
 ```
 
-### 5. Seed the permission definitions
+This creates every table in your PostgreSQL database.
+
+### 6. Seed the permission definitions
 
 ```bash
 python manage.py seed_permissions
 ```
 
-This creates the `EMPLOYEE_MGMT` module and the six `Function` rows. It does not create users or grant any permission.
+This creates the `EMPLOYEE_MGMT` module and the six `Function` rows: `CREATE_EMPLOYEE`,
+`EDIT_EMPLOYEE`, `DELETE_EMPLOYEE`, `VIEW_EMPLOYEE`, `VIEW_SELF`, and `ASSIGN_PERMISSION`. It is
+idempotent, so re-running it never duplicates a code. It does not create users and grants nothing.
 
-### 6. Create the first permission administrator
+### 7. Create the first permission administrator
 
-The first user holding `ASSIGN_PERMISSION` is created by a secure bootstrap command rather than through the API. See [Bootstrapping the Permission Administrator](#bootstrapping-the-permission-administrator) before running it — it requires host-level configuration and a trusted shell.
+A permission system needs at least one user holding `ASSIGN_PERMISSION`, but no such permission
+exists yet to authorize creating that user through the API. This step breaks that circular
+dependency by creating the initial administrator from the server shell.
 
-### 7. Run the backend
+Read the credentials from the environment by setting these two variables in your project-root
+`.env` **before** running the command:
+
+| Variable | Meaning |
+|---|---|
+| `DEMO_ADMIN_EMAIL` | Email address for the new administrator account. |
+| `DEMO_ADMIN_PASSWORD` | Password for that account. It is validated against Django's password validators, hashed immediately, and is never printed, logged, or echoed. |
+
+Choose a strong password — Django's validators will reject weak ones. Do not commit `.env`, and
+do not paste real credentials into version control or a screen recording.
+
+```bash
+cd backend
+python manage.py set_initial_permission_admin
+```
+
+What the command does:
+
+- creates a **regular** (non-staff, non-superuser) account using `DEMO_ADMIN_EMAIL` /
+  `DEMO_ADMIN_PASSWORD`;
+- grants that account **only `ASSIGN_PERMISSION`** and nothing else;
+- writes a `PermissionAudit` row so the grant is attributable;
+- does all of the above in a single transaction, so a failure leaves nothing behind;
+- is **one-time only** — it refuses to run again once `ASSIGN_PERMISSION` has been granted or
+  audited, even if that grant was later revoked.
+
+On success it prints only the new user id, for example:
+
+```text
+Created initial permission administrator (user id 1) with ASSIGN_PERMISSION.
+```
+
+**The new administrator does not receive any other permission.** They can sign in and use the
+permission-management panel, but they see no employee list, no add/edit/delete buttons, and no
+profile panel. Every additional permission — `VIEW_EMPLOYEE`, `CREATE_EMPLOYEE`, `EDIT_EMPLOYEE`,
+`DELETE_EMPLOYEE`, and `VIEW_SELF` — must be **explicitly assigned to that user**, by signing in
+as them and using the "Manage user permissions" panel (or `POST /api/permissions/assign/`), before
+those controls appear. This is deliberate: privileges are always explicit and never inherited.
+
+A second, hardened bootstrap command also exists — `python manage.py bootstrap_permission_admin` —
+for trusted production shells. It requires host-level identity mapping, ACL, and lock-path
+configuration, so use `set_initial_permission_admin` for local development, containers, and CI.
+See [Bootstrapping the Permission Administrator](#bootstrapping-the-permission-administrator).
+
+### 8. Run the backend
 
 ```bash
 python manage.py runserver
 ```
 
-The API is then available at `http://127.0.0.1:8000/`, with interactive docs at `http://127.0.0.1:8000/api/docs/`.
+The API is then available at `http://127.0.0.1:8000/`. Interactive Swagger documentation is at
+`http://127.0.0.1:8000/api/docs/`. Because the assignment requires authentication on every endpoint
+except login, both `/api/docs/` and `/api/schema/` are protected: sign in first, then open the
+Swagger page, then use the **Authorize** button in the top-right and paste a valid access token to
+make requests from the page. See [API documentation](#api-documentation).
 
-### 8. Run the frontend
+### 9. Run the frontend
 
 In a separate terminal:
 
@@ -699,18 +796,23 @@ npm run dev
 
 Open `http://localhost:5173/`.
 
-The API base URL is defined as a constant in `frontend/src/services/api.js`:
+The API base URL is read from the `VITE_API_URL` environment variable, with a development fallback
+to the default Django address:
 
 ```js
-const API_BASE_URL = 'http://127.0.0.1:8000/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api';
 ```
 
-This implementation does not read a Vite environment variable for this URL. To point the frontend at a different backend, change that source constant. The backend CORS allowlist in `backend/config/settings.py` must include the frontend origin.
+`npm run dev` therefore works against `http://127.0.0.1:8000` with no extra configuration. To point
+the frontend at a different backend, copy `frontend/.env.example` to `frontend/.env` and set
+`VITE_API_URL` — Vite reads that file from the `frontend/` directory, not from the project root, and
+only exposes variables prefixed with `VITE_`. The backend CORS allowlist in
+`backend/config/settings.py` must include the frontend origin.
 
-### 9. Run the tests
+### 10. Run the tests
 
 ```bash
-# Backend (in-memory SQLite; does not touch backend/db.sqlite3)
+# Backend (runs against PostgreSQL in a throwaway test database)
 cd backend
 python -B tests/run_isolated.py
 
@@ -782,7 +884,30 @@ After the first successful run, use the UI or `POST /api/permissions/assign/` fo
 | [`docs/api.md`](docs/api.md) | Detailed endpoint reference: request bodies, response shapes, status codes, pagination format, and bootstrap prerequisites |
 | [`docs/walkthrough.md`](docs/walkthrough.md) | Demonstration script and preflight checklist for presenting the system |
 | [`frontend/README.md`](frontend/README.md) | Frontend setup, token storage, and session behavior notes |
-| Swagger UI | Served at `/api/docs/` while the backend is running |
+| Swagger UI | Served at `/api/docs/` while the backend is running (authentication required — see [API documentation](#api-documentation)) |
+
+### API documentation
+
+The backend generates an OpenAPI 3 schema with `drf-spectacular` and renders it as interactive
+Swagger UI:
+
+| Route | Contents |
+|---|---|
+| `GET /api/docs/` | Swagger UI |
+| `GET /api/schema/` | Raw OpenAPI schema (also downloadable as YAML) |
+
+Both routes are **authenticated**, because the assignment requires authentication on every
+endpoint except login. `backend/config/urls.py` no longer grants `AllowAny` to them, so they fall
+through to `SPECTACULAR_SETTINGS["SERVE_PERMISSIONS"]`, which is `IsAuthenticated`. The generated
+schema is unaffected — only access to it is gated.
+
+To browse the API:
+
+1. `POST /api/accounts/login/` to obtain an access token.
+2. Open `http://127.0.0.1:8000/api/docs/` while signed in.
+3. Click **Authorize**, paste the access token, and save.
+4. Requests sent from the Swagger page are then made as that user, and the same per-permission
+   authorization rules apply — a 403 here means the user lacks the required function code.
 
 ---
 
@@ -818,8 +943,8 @@ The first `ASSIGN_PERMISSION` grant cannot be authorized through the API because
 
 - **Tokens are stored in `localStorage`.** Readable by same-origin JavaScript, so an XSS flaw could expose them. Moving to `HttpOnly` cookies would require coordinated backend, CSRF, and API contract changes. Deployments with strict token-theft risk should account for this.
 - **There is no server-side logout or token revocation.** Logging out clears client-side storage only; an access token remains valid until it expires (60 minutes).
-- **The API base URL is hardcoded** in `frontend/src/services/api.js` rather than read from an environment variable. Targeting another backend requires editing that constant.
-- **SQLite is a development-scale choice.** It suits a single-host demonstration; the POSIX `flock` used for bootstrap locking is host-local and does not coordinate multiple hosts sharing one database.
+- **The API base URL falls back to a hardcoded development address** (`http://127.0.0.1:8000/api`) when `VITE_API_URL` is unset. That is a convenience default for `npm run dev`; set `VITE_API_URL` in `frontend/.env` for any other target.
+- **The bootstrap lock is host-local.** The POSIX `flock` used for bootstrap locking coordinates callers on a single host only; it does not coordinate multiple hosts sharing one database.
 - **CORS origins are development defaults** (`localhost:5173`–`5175`) and `DEBUG` is enabled by the template environment. Production deployment would require hardened settings, a production secret, and a production database — none of which are configured here.
 - **No walkthrough video has been recorded.** [`docs/walkthrough.md`](docs/walkthrough.md) is a script and checklist prepared for a demonstration; it is not a recording.
 

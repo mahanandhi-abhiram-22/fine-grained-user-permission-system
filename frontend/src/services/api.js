@@ -1,6 +1,9 @@
 ﻿import axios from 'axios';
 
-const API_BASE_URL = 'http://127.0.0.1:8000/api';
+// The backend base URL can be overridden at build/dev time with VITE_API_URL
+// (see frontend/.env.example). The default keeps `npm run dev` working with no
+// extra configuration against a backend on the default Django port.
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api';
 
 const api = axios.create({
   baseURL: API_BASE_URL,

@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
+from django.core.exceptions import ValidationError
 from django.core.management.base import CommandError
 from django.urls import reverse
 from rest_framework import status
@@ -437,3 +438,58 @@ class PermissionAssignmentTests(APITestCase):
             {function['code'] for function in response.data['functions']},
             {'ASSIGN_PERMISSION', 'VIEW_EMPLOYEE', 'VIEW_SELF'},
         )
+
+class FunctionCodeValidationTests(APITestCase):
+    """The assignment requires unique uppercase permission codes.
+
+    The RegexValidator is declared on the model, so Django enforces it wherever
+    model validation runs: the Django admin, serializers, and any explicit
+    full_clean() call. These tests call full_clean() because a direct
+    .save() deliberately skips validation.
+    """
+
+    def setUp(self):
+        self.module = Module.objects.create(code='CORE', name='Core')
+
+    def build(self, code):
+        return Function(module=self.module, name='Sample', code=code)
+
+    def test_uppercase_code_passes_validation(self):
+        self.build('VIEW_EMPLOYEE').full_clean()
+
+    def test_lowercase_code_is_rejected(self):
+        with self.assertRaises(ValidationError) as context:
+            self.build('view_employee').full_clean()
+
+        self.assertIn('code', context.exception.error_dict)
+
+    def test_codes_with_punctuation_or_spaces_are_rejected(self):
+        for code in ('VIEW EMPLOYEE', 'view-Employee', 'VIEW$', 'VIEW.EMPLOYEE', ''):
+            with self.subTest(code=code):
+                with self.assertRaises(ValidationError):
+                    self.build(code).full_clean()
+
+    def test_module_code_is_validated_the_same_way(self):
+        with self.assertRaises(ValidationError):
+            Module(code='lowercase', name='Bad').full_clean()
+
+    def test_seeded_codes_all_pass_validation(self):
+        call_command('seed_permissions', verbosity=0)
+
+        self.assertEqual(sorted(Function.objects.values_list('code', flat=True)), [
+            'ASSIGN_PERMISSION',
+            'CREATE_EMPLOYEE',
+            'DELETE_EMPLOYEE',
+            'EDIT_EMPLOYEE',
+            'VIEW_EMPLOYEE',
+            'VIEW_SELF',
+        ])
+        for function in Function.objects.all():
+            with self.subTest(code=function.code):
+                function.full_clean(exclude=['module'])
+
+    def test_seed_command_is_idempotent(self):
+        call_command('seed_permissions', verbosity=0)
+        call_command('seed_permissions', verbosity=0)
+
+        self.assertEqual(Function.objects.count(), 6)
